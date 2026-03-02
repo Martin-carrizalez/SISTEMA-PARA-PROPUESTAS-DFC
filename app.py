@@ -100,6 +100,7 @@ df_cob = rc(df_cob, ["NÚMERO SEGURO","NUMERO SEGURO","NSS"], "NSS")
 df_cob = rc(df_cob, ["TELÉFONO","TELEFONO"], "TELEFONO")
 df_cob = rc(df_cob, ["CORREO"], "CORREO")
 df_cob = rc(df_cob, ["CODIGO POSTAL","CODICO POSTAL","C.P."], "CP")
+df_cob = rc(df_cob, ["MOTIVO VACANTE", "MOTIVO"], "MOTIVO_VACANTE")
 
 df_his = rc(df_his, ["NOMBRE INTERINO","NOMBRE"], "NOMBRE_INTERINO")
 df_his = rc(df_his, ["CARGA DE CUBRIAN","CARGA QUE CUBRIAN","CARGA HORARIA","HORAS"], "HORAS_HIST")
@@ -533,6 +534,7 @@ with tab3:
                     e = o["emp"]
                     for pl in o["plazas"]:
                         filas.append({
+                            "ORIGEN": "NUEVA ASIGNACIÓN" if o.get("es_nueva") else "CONTINUIDAD (COBERTURA)",
                             "FOLIO": folio_excel,
                             "SOSTENIMIENTO": pl.get("SOSTENIMIENTO","ESTATAL"),
                             "CLAVE CCT": pl.get("CLAVE_CCT",""),
