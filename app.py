@@ -48,7 +48,7 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
 @st.cache_resource
 def get_client():
     creds = Credentials.from_service_account_info(
-        st.secrets["google_sheetsS"], scopes=SCOPES)
+        st.secrets["google_sheets"], scopes=SCOPES)
     return gspread.authorize(creds)
 
 @st.cache_data(ttl=300)
