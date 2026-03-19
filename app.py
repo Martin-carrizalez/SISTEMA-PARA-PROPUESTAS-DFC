@@ -6,6 +6,9 @@ from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import datetime
 
 st.set_page_config(page_title="Asignación de Plazas", page_icon="📋", layout="wide")
 
@@ -37,13 +40,56 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ─── GOOGLE SHEETS ─────────────────────────────
+SPREADSHEET_ID = "1GExm22h2VofySyVqNjdh0509m_zzLiQKVxiXSqlkn_I"
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
+          "https://www.googleapis.com/auth/drive"]
+
+@st.cache_resource
+def get_client():
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=SCOPES)
+    return gspread.authorize(creds)
+
+@st.cache_data(ttl=300)
+def cargar_sheets():
+    gc = get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    dv = pd.DataFrame(sh.worksheet("VACANCIA").get_all_records(numericise_ignore=["all"]))
+    dc = pd.DataFrame(sh.worksheet("COBERTURA").get_all_records(numericise_ignore=["all"]))
+    dh = pd.DataFrame(sh.worksheet("HISTORIAL").get_all_records(numericise_ignore=["all"]))
+    return dv, dc, dh
+
+def guardar_asignaciones(oficios, fecha_desde, fecha_hasta):
+    try:
+        gc = get_client()
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        try:
+            ws = sh.worksheet("ASIGNACIONES")
+        except Exception:
+            ws = sh.add_worksheet("ASIGNACIONES", rows=1000, cols=10)
+            ws.append_row(["FECHA_HORA", "FOLIO", "EMPLEADO", "RFC",
+                           "CLAVE_PRESUPUESTAL", "CARGA_HORARIA",
+                           "SUSTITUYE_A", "CCT", "EFECTO_INICIAL", "EFECTO_FINAL"])
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rows = []
+        for o in oficios:
+            if not o.get("es_nueva"):
+                continue
+            e = o["emp"]
+            rows.append([now, o["folio"], e.get("NOMBRE_INTERINO", ""),
+                         e.get("RFC", ""), o["claves_presupuestales"],
+                         o["carga_horaria"], o["sustituye_a"],
+                         o["clave_cct"], fecha_desde, fecha_hasta])
+        if rows:
+            ws.append_rows(rows)
+        return True
+    except Exception as ex:
+        st.warning(f"No se pudo guardar en Sheets: {ex}")
+        return False
+
 # ─── SIDEBAR ───────────────────────────────────
 with st.sidebar:
-    st.header("📂 Cargar archivos Excel")
-    f_vacancia = st.file_uploader("1. Vacancia febrero", type=["xlsx","xls"], key="vac")
-    f_cobertura = st.file_uploader("2. Cobertura actual", type=["xlsx","xls"], key="cob")
-    f_historial = st.file_uploader("3. Historial enero", type=["xlsx","xls"], key="his")
-    st.divider()
     st.subheader("📄 Plantilla Word")
     f_plantilla = st.file_uploader("Plantilla de propuesta (.docx)", type=["docx"], key="plt")
     st.divider()
@@ -52,26 +98,20 @@ with st.sidebar:
     fecha_hasta = st.text_input("Hasta", value="31 de mayo de 2026")
     nombre_firmante = st.text_input("Firmante", value="CARMEN YOLANDA QUINTERO REYES")
     cargo_firmante = st.text_input("Cargo", value="SUBSECRETARIA DE FORMACIÓN Y ATENCIÓN AL MAGISTERIO")
+    st.divider()
+    if st.button("🔄 Recargar datos de Sheets", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
-if not (f_vacancia and f_cobertura and f_historial):
-    st.info("👈 Carga los 3 archivos Excel en el panel izquierdo para comenzar.")
-    st.markdown("""
-    **Archivos necesarios:**
-    - **Vacancia febrero** — plazas disponibles a asignar (sin empleado)
-    - **Cobertura actual** — lo que ya cubren en febrero (con datos del empleado)
-    - **Historial enero** — referencia de horas que traía cada empleado (CARGA DE CUBRIAN)
-    """)
-    st.stop()
+# ─── CARGA DESDE SHEETS ────────────────────────
+with st.spinner("Cargando datos desde Google Sheets..."):
+    try:
+        df_vac, df_cob, df_his = cargar_sheets()
+    except Exception as e:
+        st.error(f"Error conectando a Google Sheets: {e}")
+        st.stop()
 
-# ─── CARGA Y NORMALIZACIÓN ─────────────────────
-@st.cache_data
-def cargar(vb, cb, hb):
-    dv = pd.read_excel(BytesIO(vb))
-    dc = pd.read_excel(BytesIO(cb))
-    dh = pd.read_excel(BytesIO(hb))
-    return dv, dc, dh
-
-df_vac, df_cob, df_his = cargar(f_vacancia.read(), f_cobertura.read(), f_historial.read())
+# ─── NORMALIZACIÓN ─────────────────────────────
 for df in [df_vac, df_cob, df_his]:
     df.columns = df.columns.str.strip().str.upper()
 
@@ -100,7 +140,7 @@ df_cob = rc(df_cob, ["NÚMERO SEGURO","NUMERO SEGURO","NSS"], "NSS")
 df_cob = rc(df_cob, ["TELÉFONO","TELEFONO"], "TELEFONO")
 df_cob = rc(df_cob, ["CORREO"], "CORREO")
 df_cob = rc(df_cob, ["CODIGO POSTAL","CODICO POSTAL","C.P."], "CP")
-df_cob = rc(df_cob, ["MOTIVO VACANTE", "MOTIVO"], "MOTIVO_VACANTE")
+df_cob = rc(df_cob, ["MOTIVO VACANTE","MOTIVO"], "MOTIVO_VACANTE")
 
 df_his = rc(df_his, ["NOMBRE INTERINO","NOMBRE"], "NOMBRE_INTERINO")
 df_his = rc(df_his, ["CARGA DE CUBRIAN","CARGA QUE CUBRIAN","CARGA HORARIA","HORAS"], "HORAS_HIST")
@@ -125,7 +165,6 @@ df_his["HORAS_HIST"]    = limpiar_horas(df_his["HORAS_HIST"])
 horas_hist = df_his.groupby("NOMBRE_INTERINO")["HORAS_HIST"].sum().to_dict()
 horas_feb  = df_cob.groupby("NOMBRE_INTERINO")["CARGA_HORARIA"].sum().to_dict()
 
-# Datos personales: cobertura actual tiene más info
 cols_per_cob = [c for c in ["NOMBRE_INTERINO","CURP","RFC","NSS","TELEFONO","DOMICILIO","COLONIA","CP","MUNICIPIO","CORREO"] if c in df_cob.columns]
 cols_per_his = [c for c in ["NOMBRE_INTERINO","CURP","RFC","NSS","TELEFONO","DOMICILIO","COLONIA","CP","MUNICIPIO","CORREO"] if c in df_his.columns]
 
@@ -165,7 +204,6 @@ def vacantes_para(nombre):
     return df_vac[~df_vac["CLAVE_PRESUPUESTAL"].isin(excluir)].to_dict("records")
 
 def generar_oficios():
-    """Genera oficios: plazas de cobertura actual + nuevas asignadas en sesion."""
     oficios = []
     folio = 1
 
@@ -205,8 +243,7 @@ def generar_oficios():
 
 
 def fill_plantilla(plantilla_bytes, oficio, fecha_desde, fecha_hasta):
-    """Fill one copy of the Word template with oficio data."""
-    import zipfile as zf
+    import zipfile as zf, re as re2
     e = oficio["emp"]
     campos = {
         "FOLIO":                str(oficio["folio"]),
@@ -239,8 +276,6 @@ def fill_plantilla(plantilla_bytes, oficio, fecha_desde, fecha_hasta):
                     text = data.decode('utf-8')
                     for campo, valor in campos.items():
                         text = text.replace(f'«{campo}»', valor)
-                    # Replace dates
-                    import re as re2
                     text = re2.sub(r'\d{1,2} de \w+ de 202\d', fecha_desde, text, count=1)
                     text = re2.sub(r'\d{1,2} de \w+ de 202\d', fecha_hasta, text, count=1)
                     data = text.encode('utf-8')
@@ -249,7 +284,6 @@ def fill_plantilla(plantilla_bytes, oficio, fecha_desde, fecha_hasta):
     return buf.read()
 
 def merge_docx_list(docx_bytes_list):
-    """Merge list of docx bytes into one document with page breaks."""
     import zipfile as zf
     from lxml import etree
     if not docx_bytes_list: return b""
@@ -265,7 +299,6 @@ def merge_docx_list(docx_bytes_list):
     base = load_parts(docx_bytes_list[0])
     base_root = etree.fromstring(base['word/document.xml'])
     base_body = base_root.find(f'{{{NS}}}body')
-    # Remove last sectPr temporarily
     children = list(base_body)
     base_sect = children[-1] if children[-1].tag == f'{{{NS}}}sectPr' else None
     if base_sect is not None: base_body.remove(base_sect)
@@ -274,19 +307,17 @@ def merge_docx_list(docx_bytes_list):
         other = load_parts(docx_bytes)
         other_root = etree.fromstring(other['word/document.xml'])
         other_body = other_root.find(f'{{{NS}}}body')
-        # Page break
         pb = etree.SubElement(base_body, f'{{{NS}}}p')
         pb_r = etree.SubElement(pb, f'{{{NS}}}r')
         pb_br = etree.SubElement(pb_r, f'{{{NS}}}br')
         pb_br.set(f'{{{NS}}}type', 'page')
-        # Append content
         for child in list(other_body):
             if child.tag != f'{{{NS}}}sectPr':
                 base_body.append(child)
 
     if base_sect is not None: base_body.append(base_sect)
     base['word/document.xml'] = etree.tostring(base_root, xml_declaration=True,
-                                                  encoding='UTF-8', standalone=True)
+                                                encoding='UTF-8', standalone=True)
     buf = BytesIO()
     with zf.ZipFile(buf, 'w', zf.ZIP_DEFLATED) as zout:
         for name, data in base.items(): zout.writestr(name, data)
@@ -297,7 +328,6 @@ def generar_word(oficios, plantilla_bytes=None):
     if plantilla_bytes:
         filled = [fill_plantilla(plantilla_bytes, o, fecha_desde, fecha_hasta) for o in oficios]
         return BytesIO(merge_docx_list(filled))
-    # Fallback sin plantilla
     doc = DocxDocument()
     for s in doc.sections:
         s.top_margin = Cm(2); s.bottom_margin = Cm(2)
@@ -428,7 +458,6 @@ with tab2:
                 if total > 48:
                     st.error(f"⛔ Total supera 48 hrs ({total} hrs). Quita alguna plaza.")
 
-                # Plazas actuales de febrero
                 p_feb = plazas_feb_por_emp.get(n, [])
                 if p_feb:
                     with st.expander(f"📌 Ya cubre en febrero ({len(p_feb)} plazas)"):
@@ -439,7 +468,6 @@ with tab2:
                                 <div style="font-size:0.78rem;color:#64748b;">Sustituye: {p.get('SUSTITUYE_A','')}</div>
                             </div>""", unsafe_allow_html=True)
 
-                # Nuevas plazas en esta sesión
                 st.markdown("#### Plazas nuevas asignadas en esta sesión")
                 mis = st.session_state.asignaciones.get(n, [])
                 if not mis:
@@ -458,7 +486,6 @@ with tab2:
                             if st.button("❌", key=f"rm_{n}_{i}"):
                                 st.session_state.asignaciones[n].pop(i); st.rerun()
 
-                # Vacantes disponibles
                 disp = vacantes_para(n)
                 with st.expander(f"➕ Plazas disponibles para agregar ({len(disp)})"):
                     if not disp:
@@ -487,7 +514,7 @@ with tab2:
 with tab3:
     oficios = generar_oficios()
     if not oficios:
-        st.warning("No hay plazas nuevas asignadas aún.")
+        st.warning("No hay plazas asignadas aún.")
     else:
         st.success(f"✅ Se generarán **{len(oficios)} oficio(s)**.")
         relacion = [{"Oficio #": o["folio"],
@@ -566,15 +593,12 @@ with tab3:
                 with pd.ExcelWriter(xbuf, engine="openpyxl") as writer:
                     df_out.to_excel(writer, index=False, sheet_name="Propuestas")
                     ws = writer.sheets["Propuestas"]
-                    # Formato encabezados
                     from openpyxl.styles import PatternFill, Font, Alignment
                     fill = PatternFill("solid", fgColor="1A3A5C")
                     font = Font(color="FFFFFF", bold=True, size=10)
                     for cell in ws[1]:
-                        cell.fill = fill
-                        cell.font = font
+                        cell.fill = fill; cell.font = font
                         cell.alignment = Alignment(horizontal="center", wrap_text=True)
-                    # Ajustar anchos
                     for col in ws.columns:
                         max_len = max(len(str(c.value or "")) for c in col)
                         ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 35)
@@ -588,3 +612,14 @@ with tab3:
             pd.DataFrame(relacion).to_csv(cb, index=False, encoding="utf-8-sig"); cb.seek(0)
             st.download_button("📋 Descargar relación RH (CSV)", data=cb,
                 file_name="relacion_rh.csv", mime="text/csv", use_container_width=True)
+
+        st.divider()
+        if st.button("💾 Guardar asignaciones nuevas en Google Sheets", use_container_width=True):
+            nuevas = [o for o in oficios if o.get("es_nueva")]
+            if not nuevas:
+                st.warning("No hay plazas nuevas para guardar.")
+            else:
+                with st.spinner("Guardando en Google Sheets..."):
+                    ok = guardar_asignaciones(oficios, fecha_desde, fecha_hasta)
+                if ok:
+                    st.success(f"✅ {len(nuevas)} oficio(s) nuevo(s) guardados en la hoja ASIGNACIONES.")
