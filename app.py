@@ -67,20 +67,48 @@ def guardar_asignaciones(oficios, fecha_desde, fecha_hasta):
         try:
             ws = sh.worksheet("ASIGNACIONES")
         except Exception:
-            ws = sh.add_worksheet("ASIGNACIONES", rows=1000, cols=10)
-            ws.append_row(["FECHA_HORA", "FOLIO", "EMPLEADO", "RFC",
-                           "CLAVE_PRESUPUESTAL", "CARGA_HORARIA",
-                           "SUSTITUYE_A", "CCT", "EFECTO_INICIAL", "EFECTO_FINAL"])
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            ws = sh.add_worksheet("ASIGNACIONES", rows=1000, cols=26)
+            ws.append_row(["ORIGEN","FOLIO","SOSTENIMIENTO","CLAVE CCT","NOMBRE CCT",
+                           "EFECTO INICIAL","EFECTO FINAL","PLAZA","CLAVE PRESUPUESTAL",
+                           "TURNO","CARGA HORARIA","TIPO DE PLAZA","TIPO DE ALTA",
+                           "MOTIVO VACANTE","SUSTITUYE A","NOMBRE INTERINO","CURP","RFC",
+                           "NUMERO SEGURO SOCIAL","TELÉFONO MÓVIL","DOMICILIO","COLONIA",
+                           "CODICO POSTAL","MUNICIPIO","CORREO ELECTRÓNICO"])
         rows = []
+        folio_counter = 1
         for o in oficios:
             if not o.get("es_nueva"):
                 continue
             e = o["emp"]
-            rows.append([now, o["folio"], e.get("NOMBRE_INTERINO", ""),
-                         e.get("RFC", ""), o["claves_presupuestales"],
-                         o["carga_horaria"], o["sustituye_a"],
-                         o["clave_cct"], fecha_desde, fecha_hasta])
+            for pl in o["plazas"]:
+                rows.append([
+                    "NUEVA ASIGNACIÓN",
+                    folio_counter,
+                    pl.get("SOSTENIMIENTO","ESTATAL"),
+                    pl.get("CLAVE_CCT",""),
+                    pl.get("NOMBRE_CCT",""),
+                    fecha_desde,
+                    fecha_hasta,
+                    pl.get("PLAZA",""),
+                    pl.get("CLAVE_PRESUPUESTAL",""),
+                    pl.get("TURNO","MATUTINO"),
+                    pl.get("CARGA_HORARIA",""),
+                    pl.get("TIPO_PLAZA","HORA/SEMANA/MES"),
+                    pl.get("TIPO_ALTA","ALTA PROVISIONAL INTERINA"),
+                    pl.get("MOTIVO_VACANTE",""),
+                    pl.get("SUSTITUYE_A",""),
+                    e.get("NOMBRE_INTERINO",""),
+                    e.get("CURP",""),
+                    e.get("RFC",""),
+                    e.get("NSS",""),
+                    e.get("TELEFONO",""),
+                    e.get("DOMICILIO",""),
+                    e.get("COLONIA",""),
+                    e.get("CP",""),
+                    e.get("MUNICIPIO",""),
+                    e.get("CORREO",""),
+                ])
+                folio_counter += 1
         if rows:
             ws.append_rows(rows)
         return True
